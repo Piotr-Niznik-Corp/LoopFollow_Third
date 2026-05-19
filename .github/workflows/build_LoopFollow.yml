@@ -203,6 +203,15 @@ jobs:
       - name: Sync clock
         run: sudo sntp -sS time.windows.com
 
+      - name: Apply custom icons and display name
+        run: |
+          mkdir -p LoopFollow/Resources/AppIcon.appiconset
+          cp custom/1024.svg LoopFollow/Resources/Assets.xcassets/AppIcon.appiconset/loopfollow-icon.svg
+          cp custom/1024.png LoopFollow/Resources/Assets.xcassets/AppIcon.appiconset/1024.png
+          cp custom/1024.png LoopFollow/Resources/Assets.xcassets/AppIcon.appiconset/1024-dark.png
+          cp custom/1024.png LoopFollow/Resources/Assets.xcassets/AppIcon.appiconset/1024-tinted.png
+          cp custom/LoopFollowDisplayNameConfig.xcconfig LoopFollowDisplayNameConfig.xcconfig
+          
       # Build signed LoopFollow_Third IPA file
       - name: Fastlane Build & Archive
         run: bundle exec fastlane build_LoopFollow
