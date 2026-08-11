@@ -10,11 +10,10 @@ on:
 env:  
   GH_PAT: ${{ secrets.GH_PAT }}
   UPSTREAM_REPO: loopandlearn/LoopFollow_Third
-  UPSTREAM_BRANCH: ${{ github.ref_name }} # branch on upstream repository to sync from (replace with specific branch name if needed)
-  TARGET_BRANCH: ${{ github.ref_name }} # target branch on fork to be kept in sync
+  UPSTREAM_BRANCH: ${{ github.ref_name }}
+  TARGET_BRANCH: ${{ github.ref_name }}
 
 jobs:
-  # use a single runner for these sequential steps
   check_status:
     runs-on: ubuntu-latest
     name: Check status to decide whether to build
@@ -24,22 +23,16 @@ jobs:
       NEW_COMMITS: ${{ steps.sync.outputs.has_new_commits }}
       IS_SECOND_IN_MONTH: ${{ steps.date-check.outputs.is_second_instance }}
 
-    # Check GH_PAT, sync repository, check day in month
     steps:
 
       - name: Access
         id: workflow-permission
         run: |
-          # Validate Access Token
-          
-          # Ensure that gh exit codes are handled when output is piped.
           set -o pipefail
           
-          # Define patterns to validate the access token (GH_PAT) and distinguish between classic and fine-grained tokens.
           GH_PAT_CLASSIC_PATTERN='^ghp_[a-zA-Z0-9]{36}$'
           GH_PAT_FINE_GRAINED_PATTERN='^github_pat_[a-zA-Z0-9]{22}_[a-zA-Z0-9]{59}$'
           
-          # Validate Access Token (GH_PAT)
           if [ -z "$GH_PAT" ]; then
             failed=true
             echo "::error::The GH_PAT secret is unset or empty. Set it and try again."
@@ -54,7 +47,6 @@ jobs:
               echo "The GH_PAT secret does not have a known token format."
             fi
             
-            # Attempt to capture the x-oauth-scopes scopes of the token.
             if ! scopes=$(curl -sS -f -I -H "Authorization: token $GH_PAT" https://api.github.com | { grep -i '^x-oauth-scopes:' || true; } | cut -d ' ' -f2- | tr -d '\r'); then
               failed=true
               if [ $unknown_format ]; then
@@ -81,7 +73,6 @@ jobs:
             fi
           fi
           
-          # Exit unsuccessfully if secret validation failed.
           if [ $failed ]; then
             exit 2
           fi
@@ -94,9 +85,8 @@ jobs:
         with:
           token: ${{ secrets.GH_PAT }}
 
-      # This syncs any target branch to upstream branch of the same name
       - name: Sync upstream changes
-        if: | # do not run the upstream sync action on the upstream repository
+        if: |
           steps.workflow-permission.outputs.has_permission == 'true' &&
           vars.SCHEDULED_SYNC != 'false' && github.repository_owner != 'loopandlearn'
         id: sync
@@ -108,7 +98,6 @@ jobs:
           upstream_sync_branch: ${{ env.UPSTREAM_BRANCH }}
           upstream_sync_repo: ${{ env.UPSTREAM_REPO }}
 
-      # Display a sample message based on the sync output var 'has_new_commits'
       - name: New commits found
         if: |
           steps.workflow-permission.outputs.has_permission == 'true' &&
@@ -136,7 +125,6 @@ jobs:
           echo "If you want to enable automatic builds and updates for your ${{ github.event.repository.name }}, please follow the instructions \
               under the following path <code>${{ github.event.repository.name }}/fastlane/testflight.md</code>." >> $GITHUB_STEP_SUMMARY
 
-      # Set a logic flag if this is the second instance of this day-of-week in this month
       - name: Check if this is the second time this day-of-week happens this month
         id: date-check
         run: |
@@ -148,9 +136,6 @@ jobs:
             echo "is_second_instance=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # When a scheduled run finds nothing new to build, cancel the run so it shows
-  # as "cancelled" instead of "success" — a green check should always mean a
-  # new build was made.
   cancel_when_no_build:
     needs: check_status
     name: Cancel run when there is nothing to build
@@ -168,13 +153,8 @@ jobs:
         run: |
           echo "Repository is up to date and no monthly build is due — cancelling this run so it is not reported as a successful build." >> "$GITHUB_STEP_SUMMARY"
           gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
-          # Keep the job alive until the cancellation lands, so the run ends as
-          # "cancelled" rather than completing successfully first.
           sleep 300
 
-  # Checks if Distribution certificate is present and valid, optionally nukes and
-  # creates new certs if the repository variable ENABLE_NUKE_CERTS == 'true'
-  # only run if a build is planned
   check_certs:
       needs: [check_status]
       name: Check certificates
@@ -185,7 +165,6 @@ jobs:
           (vars.SCHEDULED_BUILD != 'false' && needs.check_status.outputs.IS_SECOND_IN_MONTH == 'true') ||
           (vars.SCHEDULED_SYNC != 'false' && needs.check_status.outputs.NEW_COMMITS == 'true' )
 
-  # Builds the app
   build:
     name: Build
     needs: [check_certs, check_status]
@@ -193,7 +172,7 @@ jobs:
     permissions:
       contents: write
     if:
-      | # builds with manual start; if scheduled: once a month or when new commits are found
+      |
       github.event_name == 'workflow_dispatch' ||
         (vars.SCHEDULED_BUILD != 'false' && needs.check_status.outputs.IS_SECOND_IN_MONTH == 'true') ||
         (vars.SCHEDULED_SYNC != 'false' && needs.check_status.outputs.NEW_COMMITS == 'true' )
@@ -208,7 +187,6 @@ jobs:
           submodules: recursive
           ref: ${{ env.TARGET_BRANCH }}
 
-      # Patch Fastlane Match to not print tables
       - name: Patch Match Tables
         run: |
           TABLE_PRINTER_PATH=$(ruby -e 'puts Gem::Specification.find_by_name("fastlane").gem_dir')/match/lib/match/table_printer.rb
@@ -219,15 +197,21 @@ jobs:
             exit 1
           fi
 
-      # Install project dependencies
       - name: Install Project Dependencies
         run: bundle install
 
-      # Sync the GitHub runner clock with the Windows time server (workaround as suggested in https://github.com/actions/runner/issues/2996)
       - name: Sync clock
         run: sudo sntp -sS time.windows.com
 
-      # Build signed IPA file
+      - name: Apply custom icons and display name
+        run: |
+          mkdir -p LoopFollow/Resources/Assets.xcassets/AppIcon.appiconset
+          cp custom/1024.svg LoopFollow/Resources/Assets.xcassets/AppIcon.appiconset/loopfollow-icon.svg
+          cp custom/1024.png LoopFollow/Resources/Assets.xcassets/AppIcon.appiconset/1024.png
+          cp custom/1024.png LoopFollow/Resources/Assets.xcassets/AppIcon.appiconset/1024-dark.png
+          cp custom/1024.png LoopFollow/Resources/Assets.xcassets/AppIcon.appiconset/1024-tinted.png
+          cp custom/LoopFollowDisplayNameConfig.xcconfig LoopFollowDisplayNameConfig.xcconfig
+
       - name: Fastlane Build & Archive
         run: bundle exec fastlane build_LoopFollow
         env:
@@ -238,7 +222,6 @@ jobs:
           FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
 
-      # Upload to TestFlight
       - name: Fastlane upload to TestFlight
         run: bundle exec fastlane release
         env:
@@ -249,7 +232,6 @@ jobs:
           FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
 
-      # Upload Build artifacts
       - name: Upload build log, IPA and Symbol artifacts
         if: always()
         uses: actions/upload-artifact@v6
